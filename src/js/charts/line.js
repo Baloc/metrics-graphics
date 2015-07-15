@@ -13,7 +13,9 @@
             }
 
             raw_data_transformation(args);
+
             process_line(args);
+            
             init(args);
             x_axis(args);
             y_axis(args);
@@ -47,8 +49,39 @@
                 return d[args.y_accessor];
             };
 
+            //main line
+            var line = d3.svg.line()
+                .x(args.scalefns.xf)
+                .y(args.scalefns.yf)
+                .interpolate(args.interpolate)
+                .tension(args.interpolate_tension);
+
+            //if missing_is_zero is not set, then hide data points that fall in missing
+            //data ranges or that have been explicitly identified as missing in the 
+            //data source
+            if(!args.missing_is_zero) {
+                //a line is defined if the _missing attrib is not set to true
+                //and the y-accessor is not null
+                line = line.defined(function(d) {
+                    return (d['_missing'] == undefined || d['_missing'] != true) 
+                        && d[args.y_accessor] != null;
+                })
+            }
+
+            //for animating line on first load
+            var flat_line = d3.svg.line()
+                .defined(function(d) {
+                    return (d['_missing'] == undefined || d['_missing'] != true)
+                        && d[args.y_accessor] != null;
+                })
+                .x(args.scalefns.xf)
+                .y(function() { return args.scales.Y(data_median); })
+                .interpolate(args.interpolate)
+                .tension(args.interpolate_tension);
+
             //main area
             var area = d3.svg.area()
+                .defined(line.defined())
                 .x(args.scalefns.xf)
                 .y0(args.scales.Y.range()[0])
                 .y1(args.scalefns.yf)
@@ -61,6 +94,7 @@
 
             if (args.show_confidence_band) {
                 confidence_area = d3.svg.area()
+                    .defined(line.defined())
                     .x(args.scalefns.xf)
                     .y0(function(d) {
                         var l = args.show_confidence_band[0];
@@ -73,20 +107,6 @@
                     .interpolate(args.interpolate)
                     .tension(args.interpolate_tension);
             }
-
-            //main line
-            var line = d3.svg.line()
-                .x(args.scalefns.xf)
-                .y(args.scalefns.yf)
-                .interpolate(args.interpolate)
-                .tension(args.interpolate_tension);
-
-            //for animating line on first load
-            var flat_line = d3.svg.line()
-                .x(args.scalefns.xf)
-                .y(function() { return args.scales.Y(data_median); })
-                .interpolate(args.interpolate)
-                .tension(args.interpolate_tension);
 
             //for building the optional legend
             var legend = '';
@@ -188,64 +208,6 @@
                                 .attr('class', 'mg-main-line ' + 'mg-line' + (line_id) + '-color')
                                 .attr('d', line(args.data[i]))
                                 .attr('clip-path', 'url(#mg-plot-window-' + mg_target_ref(args.target) + ')');
-                        }
-                    }
-
-                    var the_line = svg.select('.mg-line' + (line_id) + '-color');
-                    if (args.missing_is_hidden && the_line.attr('d') !== null) {
-                        var bits = the_line.attr('d').split('L');
-                        var zero = args.scales.Y(0) + 42.1234;
-                        var dasharray = [];
-                        var singleton_point_length = 2;
-
-                        var x_y,
-                            x_y_plus_1,
-                            x,
-                            y,
-                            x_plus_1,
-                            y_plus_1,
-                            segment_length,
-                            cumulative_segment_length = 0;
-
-                        bits[0] = bits[0].replace('M', '');
-                        bits[bits.length - 1] = bits[bits.length - 1].replace('Z', '');
-
-                        //if we have a min_x, turn the line off first
-                        if (args.min_x) {
-                            dasharray.push(0);
-                        }
-
-                        //build the stroke-dasharray pattern
-                        for (var j = 0; j < bits.length - 1; j++) {
-                            x_y = bits[j].split(',');
-                            x_y_plus_1 = bits[j + 1].split(',');
-                            x = Number(x_y[0]);
-                            y = Number(x_y[1]);
-                            x_plus_1 = Number(x_y_plus_1[0]);
-                            y_plus_1 = Number(x_y_plus_1[1]);
-
-                            segment_length = Math.sqrt(Math.pow(x - x_plus_1, 2) + Math.pow(y - y_plus_1, 2));
-
-                            //do we need to either cover or clear the current stroke
-                            if (y_plus_1 == zero && y != zero) {
-                                dasharray.push(cumulative_segment_length || singleton_point_length);
-                                cumulative_segment_length = (cumulative_segment_length)
-                                    ? segment_length
-                                    : segment_length - singleton_point_length;
-                            } else if (y_plus_1 != zero && y == zero) { //switching on line
-                                dasharray.push(cumulative_segment_length += segment_length);
-                                cumulative_segment_length = 0;
-                            } else {
-                                cumulative_segment_length += segment_length;
-                            }
-                        }
-
-                        //fear not, end bit of line, ye too shall be covered
-                        if (dasharray.length > 0) {
-                            dasharray.push(the_line.node().getTotalLength() - dasharray[dasharray.length - 1]);
-
-                            svg.select('.mg-line' + (line_id) + '-color')
-                                .attr('stroke-dasharray', dasharray.join());
                         }
                     }
 
@@ -408,7 +370,8 @@
             else if (args.data.length > 1 && args.aggregate_rollover) {
                 data_nested = d3.nest()
                     .key(function(d) { return d[args.x_accessor]; })
-                    .entries(d3.merge(args.data));
+                    .entries(d3.merge(args.data))
+                    .sort(function(a, b) { return new Date(a.key) - new Date(b.key); });
 
                 xf = data_nested.map(function(di) {
                     return args.scales.X(new Date(di.key));
@@ -441,6 +404,23 @@
                                     return ((xf[i] - xf[i-1]) / 2).toFixed(2);
                                 } else {
                                     return ((xf[i+1] - xf[i-1]) / 2).toFixed(2);
+                                }
+                            })
+                            .attr('class', function(d) {
+                                if (args.linked && d.values.length > 0) {
+                                    var formatter = d3.time.format(args.linked_format);
+
+                                    // add line classes for every line the rect contains
+                                    var line_classes = d.values.map(function(datum) {
+                                        return 'mg-line' + datum.line_id + '-color';
+                                    }).join(" ");
+                                    var first_datum = d.values[0];
+                                    var v = first_datum[args.x_accessor];
+                                    var id = (typeof v === 'number') ? i : formatter(v);
+
+                                    return line_classes + ' roll_' + id;
+                                } else {
+                                    return line_classes;
                                 }
                             })
                             .attr('height', args.height - args.bottom - args.top - args.buffer)
@@ -592,19 +572,20 @@
                             .style('opacity', 1);
                       }
                     });
-                } else if (args.missing_is_hidden
-                            && d[args.y_accessor] == 0
-                            && d['missing']) {
+                } else if ((args.missing_is_hidden && d['_missing']) 
+                        || d[args.y_accessor] == null
+                    ) {
                     //disable rollovers for hidden parts of the line
+                    //recall that hidden parts are missing data ranges and possibly also
+                    //data points that have been explicitly identified as missing
                     return;
                 } else {
-
                     //show circle on mouse-overed rect
                     if (d[args.x_accessor] >= args.processed.min_x &&
                         d[args.x_accessor] <= args.processed.max_x &&
                         d[args.y_accessor] >= args.processed.min_y &&
                         d[args.y_accessor] <= args.processed.max_y
-                    ){
+                    ) {
                         svg.selectAll('circle.mg-line-rollover-circle.mg-area' + d.line_id + '-color')
                             .attr('class', "")
                             .attr('class', 'mg-area' + d.line_id + '-color')
@@ -618,22 +599,21 @@
                             .attr('r', args.point_size)
                             .style('opacity', 1);
                     }
+                }
 
-                    //trigger mouseover on all rects for this date in .linked charts
-                    if (args.linked && !MG.globals.link) {
-                        MG.globals.link = true;
+                //trigger mouseover on all rects for this date in .linked charts
+                if (args.linked && !MG.globals.link) {
+                    MG.globals.link = true;
 
-                        var v = d[args.x_accessor];
+                    if (!args.aggregate_rollover || d.value || d.values.length > 0) {
+                        var datum = d.values ? d.values[0] : d;
                         var formatter = d3.time.format(args.linked_format);
-
-                        //only format when y-axis is date
-                        var id = (typeof v === 'number')
-                                ? i
-                                : formatter(v);
+                        var v = datum[args.x_accessor];
+                        var id = (typeof v === 'number') ? i : formatter(v);
 
                         //trigger mouseover on matching line in .linked charts
-                        d3.selectAll('.mg-line' + d.line_id + '-color.roll_' + id)
-                            .each(function(d, i) {
+                        d3.selectAll('.mg-line' + datum.line_id + '-color.roll_' + id)
+                            .each(function(d) {
                                 d3.select(this).on('mouseover')(d,i);
                             });
                     }
@@ -750,18 +730,18 @@
                 if (args.linked && MG.globals.link) {
                     MG.globals.link = false;
 
-                    var v = d[args.x_accessor];
                     var formatter = d3.time.format(args.linked_format);
+                    var datums = d.values ? d.values : [d];
+                    datums.forEach(function(datum) {
+                        var v = datum[args.x_accessor];
+                        var id = (typeof v === 'number') ? i : formatter(v);
 
-                    //only format when y-axis is date
-                    var id = (typeof v === 'number')
-                            ? i
-                            : formatter(v);
-
-                    d3.selectAll('.roll_' + id)
-                        .each(function(d, i) {
-                            d3.select(this).on('mouseout')(d);
-                        });
+                        //trigger mouseout on matching line in .linked charts
+                        d3.selectAll('.roll_' + id)
+                            .each(function(d) {
+                                d3.select(this).on('mouseout')(d);
+                            });
+                    });
                 }
 
                 //remove all active data points when aggregate_rollover is enabled
