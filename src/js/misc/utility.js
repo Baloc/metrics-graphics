@@ -383,3 +383,26 @@ function wrap_text(text, width, token, tspanAttrs) {
 }
 
 MG.wrap_text = wrap_text;
+
+/**
+ * Increment timestep, depending of the  missing_resolution arg
+ * @param dateobj Date to increment
+ * @param missing_resolution
+ */
+function modify_timestep(dateobj, missing_resolution){
+    switch(missing_resolution.toLowerCase())
+    {
+        case "second":
+            return dateobj.setSeconds(dateobj.getSeconds() + 1);
+            break;
+        case "minute":
+            return dateobj.setMinutes(dateobj.getMinutes() + 1);
+            break;
+        case "hour":
+            return dateobj.setHours(dateobj.getHours() + 1);
+            break;
+        case "day":
+            return dateobj.setDate(dateobj.getDate() + 1);
+            break;
+    }
+}

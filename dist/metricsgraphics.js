@@ -98,6 +98,7 @@ MG.data_graphic = function(args) {
     var defaults = {
         missing_is_zero: false,       // if true, missing values will be treated as zeros
         missing_is_hidden: false,     // if true, missing values will appear as broken segments
+        missing_resolution: 'day',    // Set time resolution for missing points
         legend: '' ,                  // an array identifying the labels for a chart's lines
         legend_target: '',            // if set, the specified element is populated with a legend
         error: '',                    // if set, a graph will show an error icon and log the error to the console
@@ -4540,18 +4541,53 @@ function process_line(args) {
             //initialize our new array for storing the processed data
             var processed_data = [];
 
-            //we'll be starting from the day after our first date
-            var start_date = MG.clone(first[args.x_accessor]).setDate(first[args.x_accessor].getDate() + 1);
+            //we'll be starting from the time step after our first date
+            var start_date = null;
+            switch(args.missing_resolution.toLowerCase())
+            {
+                case "second":
+                    start_date = MG.clone(first[args.x_accessor]).setSeconds(first[args.x_accessor].getSeconds() + 1);
+                    break;
+                case "minute":
+                    start_date = MG.clone(first[args.x_accessor]).setMinutes(first[args.x_accessor].getMinutes() + 1);
+                    break;
+                case "hour":
+                    start_date = MG.clone(first[args.x_accessor]).setHours(first[args.x_accessor].getHours() + 1);
+                    break;
+                case "day":
+                    start_date = MG.clone(first[args.x_accessor]).setDate(first[args.x_accessor].getDate() + 1);
+                    break;
+            }
+
 
             //if we've set a max_x, add data points up to there
             var from = (args.min_x) ? args.min_x : start_date;
             var upto = (args.max_x) ? args.max_x : last[args.x_accessor];
-            for (var d = new Date(from); d <= upto; d.setDate(d.getDate() + 1)) {
+            for (var d = new Date(from); d <= upto; modify_timestep(d,args.missing_resolution)) {
                 var o = {};
-                d.setHours(0, 0, 0, 0);
-
+                //set time refence and differential depending of the missing_resolution arg
+                var date_diff = null;
+                switch(args.missing_resolution.toLowerCase())
+                {
+                    case "second":
+                        d.setMilliseconds(0);
+                        date_diff = new Date(d - 1000);
+                        break;
+                    case "minute":
+                        d.setSeconds(0, 0);
+                        date_diff = new Date(d - 60000);
+                        break;
+                    case "hour":
+                        d.setMinutes(0, 0, 0);
+                        date_diff = new Date(d - 3600000);
+                        break;
+                    case "day":
+                        d.setHours(0, 0, 0, 0);
+                        date_diff = new Date(d - 86400000);
+                        break;
+                }
                 //add the first date item (judge me not, world)
-                //we'll be starting from the day after our first date
+                //we'll be starting from the minute after our first date
                 if (Date.parse(d) === Date.parse(new Date(start_date))) {
                     processed_data.push(MG.clone(args.data[i][0]));
                 }
@@ -4559,10 +4595,9 @@ function process_line(args) {
                 //check to see if we already have this date in our data object
                 var existing_o = null;
                 args.data[i].forEach(function(val, i) {
-                    if (Date.parse(val[args.x_accessor]) === Date.parse(new Date(d))) {
-                        existing_o = val;
-
-                        return false;
+                    //Retrieve all the existing values in the time interval
+                    if (Date.parse(val[args.x_accessor]) <= Date.parse(new Date(d)) && Date.parse(val[args.x_accessor]) > Date.parse(date_diff)) {
+                        processed_data.push(val);
                     }
                 });
 
@@ -4572,10 +4607,6 @@ function process_line(args) {
                     o[args.y_accessor] = 0;
                     o['missing'] = true; //we want to distinguish between zero-value and missing observations
                     processed_data.push(o);
-                }
-                //otherwise, use the existing object for that date
-                else {
-                    processed_data.push(existing_o);
                 }
             }
 
@@ -5438,6 +5469,29 @@ function wrap_text(text, width, token, tspanAttrs) {
 }
 
 MG.wrap_text = wrap_text;
+
+/**
+ * Increment timestep, depending of the  missing_resolution arg
+ * @param dateobj Date to increment
+ * @param missing_resolution
+ */
+function modify_timestep(dateobj, missing_resolution){
+    switch(missing_resolution.toLowerCase())
+    {
+        case "second":
+            return dateobj.setSeconds(dateobj.getSeconds() + 1);
+            break;
+        case "minute":
+            return dateobj.setMinutes(dateobj.getMinutes() + 1);
+            break;
+        case "hour":
+            return dateobj.setHours(dateobj.getHours() + 1);
+            break;
+        case "day":
+            return dateobj.setDate(dateobj.getDate() + 1);
+            break;
+    }
+}
 
 //call this to add a warning icon to a graph and log an error to the console
 function error(args) {
